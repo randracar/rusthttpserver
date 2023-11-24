@@ -1,5 +1,5 @@
 use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
+use std::io::{Read, Write, Error};
 use std::io;
 use std::fs::File;
 use std::thread;
@@ -119,7 +119,19 @@ fn handle_client(mut stream: TcpStream) {
     }
 }
 
-
+fn handle_incoming_stream(stream: Result<TcpStream, Error>) {
+    match stream {
+        Ok(stream) => {
+            thread::spawn(|| {
+                handle_client(stream);
+            });
+        }
+        Err(e) => {
+            let err = format!("{} {}", utils::UNABLETOCONNECT, e);
+            log_error(utils::ERRORLOGS, err);
+        }
+    }
+}
 fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(utils::IPADDR).unwrap();
     println!("Listening on 127.0.0.1:5455");
@@ -129,17 +141,7 @@ fn main() -> std::io::Result<()> {
     println!("/novo");
 
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(|| {
-                    handle_client(stream);
-                });
-            }
-            Err(e) => {
-                let err = format!("{} {}", utils::UNABLETOCONNECT, e);
-                log_error(utils::ERRORLOGS, err);
-            }
-        }
+        handle_incoming_stream(stream);
     }
     Ok(())
 }
