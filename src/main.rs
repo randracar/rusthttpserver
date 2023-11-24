@@ -1,10 +1,11 @@
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
+use std::io;
 use std::fs::File;
 use std::thread;
 
 mod utils;
-
+ 
 pub struct HTTPResponse {
     version: String,
     status: String,
@@ -12,12 +13,23 @@ pub struct HTTPResponse {
     content: String,
 }
 
+fn log_error(file_path: &str, error: String) -> io::Result<()> {
+    // Open the file in write mode, creating it if it doesn't exist
+    let mut file = File::create(file_path)?;
+
+    let content = format!("{}\n", error);
+    // Write the content to the file
+    file.write_all(content.as_bytes())?;
+
+    Ok(())
+}
+
 impl HTTPResponse {
     pub fn new() -> Self {
         Self {
-            version: String::from("HTTP/1.1"),
-            status: String::from("200 OK"),
-            content_type: String::from("text/plain"),
+            version: String::from(utils::HTTP11),
+            status: String::from(utils::STATUS200),
+            content_type: String::from(utils::TEXTPLAIN),
             content: String::new(),
         }
     }
@@ -25,19 +37,22 @@ impl HTTPResponse {
     pub fn set_content_from_file(&mut self, file_path: &str) {
         let mut file = match File::open(file_path) {
             Ok(file) => file,
-            Err(_) => {
-                self.status = String::from("404 Not Found");
+            Err(e) => {
+                self.status = format!("{}: {}", utils::ERROR404, e);
+                log_error(utils::ERRORLOGS, self.status.clone());
+                println!("{}", self.status);
                 return;
             }
         };
 
         let mut content = String::new();
-        if let Err(_) = file.read_to_string(&mut content) {
-            self.status = String::from("500 Internal Server Error");
+        if let Err(e) = file.read_to_string(&mut content) {
+            self.status = format!("{}: {}", utils::ERROR500, e);
+            log_error(utils::ERRORLOGS, self.status.clone());
             return;
         }
 
-        self.content_type = String::from("text/html");
+        self.content_type = String::from(utils::HTML);
         self.content = content;
     }
 
@@ -47,9 +62,31 @@ impl HTTPResponse {
 
 }
 
+
+fn handle_path(path: &str, httpresp: HTTPResponse) -> String {
+    let mut new_httpresp = httpresp;
+    if path == "/" {
+        new_httpresp.set_content_from_file(utils::MAINSITE);
+        let response_str = format!("{} {} {}\r\n\r\n{}", new_httpresp.version, new_httpresp.status, new_httpresp.content_type, new_httpresp.content);
+        return response_str;
+    } else if path == "/teste" {
+        new_httpresp.set_content(utils::TESTE_CONTENT);
+        let response_str = format!("{} {} {}\r\n\r\n{}", new_httpresp.version, new_httpresp.status, new_httpresp.content_type, new_httpresp.content);
+        return response_str;
+    } else if path == "/novo" {
+        new_httpresp.set_content(utils::NOVO_CONTENT);
+        let response_str = format!("{} {} {}\r\n\r\n{}", new_httpresp.version, new_httpresp.status, new_httpresp.content_type, new_httpresp.content);
+        return response_str;
+    } else {
+        new_httpresp.set_content(utils::PAGENOTFOUND);
+        let response_str = format!("{} {} {}\r\n\r\n{}", new_httpresp.version, new_httpresp.status, new_httpresp.content_type, new_httpresp.content);
+        return response_str;
+    }
+}
+
 fn handle_client(mut stream: TcpStream) {
     let mut buffer = [0; 512];
-    let mut httpresp = HTTPResponse::new();
+    let  httpresp = HTTPResponse::new();
     let mut response_str = String::new();
     let mut response = "";
     match stream.read(&mut buffer) {
@@ -65,25 +102,8 @@ fn handle_client(mut stream: TcpStream) {
 
                     let path = headers_parts[1];
                     println!("Requested path: {}", path);
-
-                    if path == "/" {
-                        httpresp.set_content_from_file("C:/Users/randr/Documents/Rust/HTTPRemake/src/html/main.html");
-                        response_str = format!("{} {} {}\r\n\r\n{}", httpresp.version, httpresp.status, httpresp.content_type, httpresp.content);
-                        response = response_str.as_str();
-                        println!("{}", response);
-                    } else if path == "/teste" {
-                        httpresp.set_content("Teste!");
-                        response_str = format!("{} {} {}\r\n\r\n{}", httpresp.version, httpresp.status, httpresp.content_type, httpresp.content);
-                        response = response_str.as_str();
-                    } else if path == "/novo" {
-                        httpresp.set_content("Novo!");
-                        response_str = format!("{} {} {}\r\n\r\n{}", httpresp.version, httpresp.status, httpresp.content_type, httpresp.content);
-                        response = response_str.as_str();
-                    } else {
-                        httpresp.set_content("Page not found! :(");
-                        response_str = format!("{} {} {}\r\n\r\n{}", httpresp.version, httpresp.status, httpresp.content_type, httpresp.content);
-                        response = response_str.as_str();
-                    }
+                    response_str = handle_path(path, httpresp);
+                    response = response_str.as_str();
                 }
 
             }
@@ -92,14 +112,16 @@ fn handle_client(mut stream: TcpStream) {
             stream.flush().unwrap();
         }
         Err(e) => {
-            println!("Failed to read from the stream: {}", e);
+            let err = format!("{} {}", utils::STREAMREADERROR, e);
+            println!("{}", err);
+            log_error(utils::ERRORLOGS, err);
         }
     }
 }
 
 
 fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:5455").unwrap();
+    let listener = TcpListener::bind(utils::IPADDR).unwrap();
     println!("Listening on 127.0.0.1:5455");
     println!("Available paths: ");
     println!("/");
@@ -114,7 +136,8 @@ fn main() -> std::io::Result<()> {
                 });
             }
             Err(e) => {
-                println!("Unable to connect: {}", e);
+                let err = format!("{} {}", utils::UNABLETOCONNECT, e);
+                log_error(utils::ERRORLOGS, err);
             }
         }
     }
